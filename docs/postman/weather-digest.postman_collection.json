@@ -1,0 +1,87 @@
+{
+  "info": {
+    "name": "Weather Digest API",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "description": "Collection for Open-Meteo geocoding and forecast requests used in the Weather Digest CLI."
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "https://geocoding-api.open-meteo.com/v1" },
+    { "key": "forecastBaseUrl", "value": "https://api.open-meteo.com/v1" },
+    { "key": "city", "value": "Нижний Новгород" },
+    { "key": "lat", "value": "56.2965" },
+    { "key": "lon", "value": "43.9361" }
+  ],
+  "item": [
+    {
+      "name": "Geocoding by city",
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "Accept", "value": "application/json" }],
+        "url": {
+          "raw": "{{baseUrl}}/search?name={{city}}&count=1&language=ru&format=json",
+          "protocol": "https",
+          "host": ["geocoding-api.open-meteo.com"],
+          "path": ["v1", "search"],
+          "query": [
+            { "key": "name", "value": "{{city}}" },
+            { "key": "count", "value": "1" },
+            { "key": "language", "value": "ru" },
+            { "key": "format", "value": "json" }
+          ]
+        }
+      },
+      "response": [
+        {
+          "name": "Success",
+          "originalRequest": { "method": "GET", "url": { "raw": "{{baseUrl}}/search?name={{city}}&count=1&language=ru&format=json" } },
+          "status": "OK",
+          "code": 200,
+          "body": "{\n  \"results\": [{\n    \"name\": \"Нижний Новгород\",\n    \"country\": \"Russia\",\n    \"latitude\": 56.2965,\n    \"longitude\": 43.9361\n  }]\n}"
+        },
+        {
+          "name": "City not found",
+          "originalRequest": { "method": "GET", "url": { "raw": "{{baseUrl}}/search?name=SomeUnknownPlace&count=1&language=ru&format=json" } },
+          "status": "Not Found",
+          "code": 200,
+          "body": "{\n  \"results\": []\n}"
+        }
+      ]
+    },
+    {
+      "name": "Forecast by coordinates",
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "Accept", "value": "application/json" }],
+        "url": {
+          "raw": "{{forecastBaseUrl}}/forecast?latitude={{lat}}&longitude={{lon}}&daily=temperature_2m_max,temperature_2m_min,precipitation_sum&forecast_days=3&timezone=auto",
+          "protocol": "https",
+          "host": ["api.open-meteo.com"],
+          "path": ["v1", "forecast"],
+          "query": [
+            { "key": "latitude", "value": "{{lat}}" },
+            { "key": "longitude", "value": "{{lon}}" },
+            { "key": "daily", "value": "temperature_2m_max,temperature_2m_min,precipitation_sum" },
+            { "key": "forecast_days", "value": "3" },
+            { "key": "timezone", "value": "auto" }
+          ]
+        }
+      },
+      "response": [
+        {
+          "name": "Success",
+          "originalRequest": { "method": "GET", "url": { "raw": "{{forecastBaseUrl}}/forecast?latitude={{lat}}&longitude={{lon}}&daily=temperature_2m_max,temperature_2m_min,precipitation_sum&forecast_days=3&timezone=auto" } },
+          "status": "OK",
+          "code": 200,
+          "body": "{\n  \"daily\": {\n    \"time\": [\"2026-09-12\", \"2026-09-13\", \"2026-09-14\"],\n    \"temperature_2m_min\": [17, 16, 15],\n    \"temperature_2m_max\": [22, 23, 21],\n    \"precipitation_sum\": [3.2, 0.1, 1.6]\n  }\n}"
+        },
+        {
+          "name": "Bad request",
+          "originalRequest": { "method": "GET", "url": { "raw": "{{forecastBaseUrl}}/forecast?latitude=9999&longitude=9999&daily=temperature_2m_max,temperature_2m_min,precipitation_sum&forecast_days=3&timezone=auto" } },
+          "status": "Bad Request",
+          "code": 400,
+          "body": "{\n  \"error\": true,\n  \"reason\": \"Latitude or longitude out of range\"\n}"
+        }
+      ]
+    }
+  ]
+}
