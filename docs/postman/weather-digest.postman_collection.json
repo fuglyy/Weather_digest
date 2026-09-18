@@ -1,86 +1,45 @@
 {
   "info": {
-    "name": "Weather Digest API",
-    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
-    "description": "Collection for Open-Meteo geocoding and forecast requests used in the Weather Digest CLI."
+    "name": "Weather Digest Maintenance API",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
-    { "key": "baseUrl", "value": "https://geocoding-api.open-meteo.com/v1" },
-    { "key": "forecastBaseUrl", "value": "https://api.open-meteo.com/v1" },
-    { "key": "city", "value": "Нижний Новгород" },
-    { "key": "lat", "value": "56.2965" },
-    { "key": "lon", "value": "43.9361" }
+    { "key": "baseUrl", "value": "http://localhost:3000" },
+    { "key": "equipmentId", "value": "" },
+    { "key": "requestId", "value": "" }
   ],
   "item": [
     {
-      "name": "Geocoding by city",
-      "request": {
-        "method": "GET",
-        "header": [{ "key": "Accept", "value": "application/json" }],
-        "url": {
-          "raw": "{{baseUrl}}/search?name={{city}}&count=1&language=ru&format=json",
-          "protocol": "https",
-          "host": ["geocoding-api.open-meteo.com"],
-          "path": ["v1", "search"],
-          "query": [
-            { "key": "name", "value": "{{city}}" },
-            { "key": "count", "value": "1" },
-            { "key": "language", "value": "ru" },
-            { "key": "format", "value": "json" }
-          ]
-        }
-      },
-      "response": [
+      "name": "Health",
+      "request": { "method": "GET", "url": "{{baseUrl}}/api/health" },
+      "event": [{ "listen": "test", "script": { "exec": ["pm.test('200 and data', function () { pm.response.to.have.status(200); pm.expect(pm.response.json().data.status).to.eql('ok'); });"] } }]
+    },
+    {
+      "name": "Equipment",
+      "item": [
         {
-          "name": "Success",
-          "originalRequest": { "method": "GET", "url": { "raw": "{{baseUrl}}/search?name={{city}}&count=1&language=ru&format=json" } },
-          "status": "OK",
-          "code": 200,
-          "body": "{\n  \"results\": [{\n    \"name\": \"Нижний Новгород\",\n    \"country\": \"Russia\",\n    \"latitude\": 56.2965,\n    \"longitude\": 43.9361\n  }]\n}"
+          "name": "Create equipment",
+          "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"name\": \"Турбина A-1\",\n  \"type\": \"turbine\",\n  \"serialNumber\": \"WT-001\",\n  \"location\": { \"lat\": 55.75, \"lon\": 37.61 },\n  \"status\": \"operational\",\n  \"installedAt\": \"2020-01-01T00:00:00.000Z\"\n}" }, "url": "{{baseUrl}}/api/equipment" },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('201', function () { pm.response.to.have.status(201); });", "pm.collectionVariables.set('equipmentId', pm.response.json().data.id);"] } }]
         },
-        {
-          "name": "City not found",
-          "originalRequest": { "method": "GET", "url": { "raw": "{{baseUrl}}/search?name=SomeUnknownPlace&count=1&language=ru&format=json" } },
-          "status": "Not Found",
-          "code": 200,
-          "body": "{\n  \"results\": []\n}"
-        }
+        { "name": "List equipment", "request": { "method": "GET", "url": "{{baseUrl}}/api/equipment?page=1&limit=20" } },
+        { "name": "Equipment requests", "request": { "method": "GET", "url": "{{baseUrl}}/api/equipment/{{equipmentId}}/requests" } },
+        { "name": "Equipment weather", "request": { "method": "GET", "url": "{{baseUrl}}/api/equipment/{{equipmentId}}/weather" } },
+        { "name": "Duplicate serial (409)", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\"name\":\"Duplicate\",\"type\":\"sensor\",\"serialNumber\":\"WT-001\",\"location\":{\"lat\":1,\"lon\":1},\"status\":\"operational\",\"installedAt\":\"2020-01-01\"}" }, "url": "{{baseUrl}}/api/equipment" }, "event": [{ "listen": "test", "script": { "exec": ["pm.test('409', function () { pm.response.to.have.status(409); });"] } }] }
       ]
     },
     {
-      "name": "Forecast by coordinates",
-      "request": {
-        "method": "GET",
-        "header": [{ "key": "Accept", "value": "application/json" }],
-        "url": {
-          "raw": "{{forecastBaseUrl}}/forecast?latitude={{lat}}&longitude={{lon}}&daily=temperature_2m_max,temperature_2m_min,precipitation_sum&forecast_days=3&timezone=auto",
-          "protocol": "https",
-          "host": ["api.open-meteo.com"],
-          "path": ["v1", "forecast"],
-          "query": [
-            { "key": "latitude", "value": "{{lat}}" },
-            { "key": "longitude", "value": "{{lon}}" },
-            { "key": "daily", "value": "temperature_2m_max,temperature_2m_min,precipitation_sum" },
-            { "key": "forecast_days", "value": "3" },
-            { "key": "timezone", "value": "auto" }
-          ]
-        }
-      },
-      "response": [
+      "name": "Requests",
+      "item": [
         {
-          "name": "Success",
-          "originalRequest": { "method": "GET", "url": { "raw": "{{forecastBaseUrl}}/forecast?latitude={{lat}}&longitude={{lon}}&daily=temperature_2m_max,temperature_2m_min,precipitation_sum&forecast_days=3&timezone=auto" } },
-          "status": "OK",
-          "code": 200,
-          "body": "{\n  \"daily\": {\n    \"time\": [\"2026-09-12\", \"2026-09-13\", \"2026-09-14\"],\n    \"temperature_2m_min\": [17, 16, 15],\n    \"temperature_2m_max\": [22, 23, 21],\n    \"precipitation_sum\": [3.2, 0.1, 1.6]\n  }\n}"
+          "name": "Create request",
+          "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"equipmentId\": \"{{equipmentId}}\",\n  \"title\": \"Заменить датчик\",\n  \"priority\": \"high\"\n}" }, "url": "{{baseUrl}}/api/requests" },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('201', function () { pm.response.to.have.status(201); });", "pm.collectionVariables.set('requestId', pm.response.json().data.id);"] } }]
         },
-        {
-          "name": "Bad request",
-          "originalRequest": { "method": "GET", "url": { "raw": "{{forecastBaseUrl}}/forecast?latitude=9999&longitude=9999&daily=temperature_2m_max,temperature_2m_min,precipitation_sum&forecast_days=3&timezone=auto" } },
-          "status": "Bad Request",
-          "code": 400,
-          "body": "{\n  \"error\": true,\n  \"reason\": \"Latitude or longitude out of range\"\n}"
-        }
+        { "name": "List requests", "request": { "method": "GET", "url": "{{baseUrl}}/api/requests?status=new&page=1&limit=20" } },
+        { "name": "Invalid status transition (409)", "request": { "method": "PATCH", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\"status\":\"done\"}" }, "url": "{{baseUrl}}/api/requests/{{requestId}}/status" }, "event": [{ "listen": "test", "script": { "exec": ["pm.test('409', function () { pm.response.to.have.status(409); });"] } }] },
+        { "name": "Move to in progress", "request": { "method": "PATCH", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\"status\":\"in_progress\"}" }, "url": "{{baseUrl}}/api/requests/{{requestId}}/status" } },
+        { "name": "Unknown request (404)", "request": { "method": "GET", "url": "{{baseUrl}}/api/requests/00000000-0000-4000-8000-000000000000" }, "event": [{ "listen": "test", "script": { "exec": ["pm.test('404', function () { pm.response.to.have.status(404); });"] } }] }
       ]
     }
   ]
