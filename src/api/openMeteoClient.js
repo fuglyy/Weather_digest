@@ -68,7 +68,7 @@ export async function getForecast(latitude, longitude, days, timeoutMs = config.
   const url = new URL(config.forecastBaseUrl);
   url.searchParams.set('latitude', String(latitude));
   url.searchParams.set('longitude', String(longitude));
-  url.searchParams.set('daily', 'temperature_2m_max,temperature_2m_min,precipitation_sum');
+  url.searchParams.set('daily', 'temperature_2m_max,temperature_2m_min,precipitation_sum,wind_speed_10m_max');
   url.searchParams.set('forecast_days', String(days));
   url.searchParams.set('timezone', 'auto');
 

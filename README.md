@@ -1,4 +1,69 @@
-# Weather Digest
+# Weather Digest / Maintenance API
+
+REST API для учёта оборудования и заявок на обслуживание производственной площадки.
+Данные хранятся в JSON-файлах через отдельный repository layer; внешний прогноз использует
+Open-Meteo из исходного погодного модуля.
+
+## Быстрый запуск API
+
+```bash
+npm install
+cp .env.example .env
+npm start
+```
+
+Сервис доступен на `http://localhost:3000`. Старый CLI запускается через `npm run cli -- --city "Москва" --days 3`.
+
+## Переменные окружения API
+
+`PORT`, `NODE_ENV`, `CORS_ORIGINS` (явный список origin через запятую), `RATE_LIMIT_WINDOW_MS`,
+`RATE_LIMIT_MAX`, `DATA_DIR`, `OUTDOOR_WIND_MAX`, `REQUEST_TIMEOUT_MS`, `GEOCODING_BASE_URL`,
+`FORECAST_BASE_URL`. Тело запроса ограничено 100 KB. Cookie сервис не использует, поэтому
+флаги SameSite/Secure/HttpOnly не применяются.
+
+## API
+
+| Метод | Путь | Назначение |
+| --- | --- | --- |
+| GET | `/api/health` | Проверка доступности |
+| GET/POST | `/api/equipment` | Список / создание оборудования |
+| GET/PATCH/DELETE | `/api/equipment/:id` | Карточка, изменение, удаление |
+| GET | `/api/equipment/:id/requests` | Заявки оборудования |
+| GET | `/api/equipment/:id/weather` | Прогноз и пригодность наружных работ |
+| GET/POST | `/api/requests` | Список / создание заявки |
+| GET/PATCH/DELETE | `/api/requests/:id` | Карточка, изменение, удаление |
+| PATCH | `/api/requests/:id/status` | Контролируемая смена статуса |
+
+Списки поддерживают `page`, `limit`, `sortBy`, `order`; оборудование фильтруется по `type` и
+`status`, заявки по `equipmentId`, `status` и `priority`. Ответ списка имеет вид `{ data, meta: { total, page, limit } }`.
+
+Заявка проходит переходы `new -> in_progress -> done`, а также `new -> rejected` и
+`in_progress -> rejected`. Завершённые и отклонённые заявки не меняют статус; нарушение возвращает 409.
+Погодное окно пригодно, если осадки равны нулю и максимальный ветер ниже `OUTDOOR_WIND_MAX`.
+
+Ошибки имеют единый формат:
+
+```json
+{"error":{"code":"VALIDATION_ERROR","message":"Некорректные данные запроса","details":[{"field":"priority","message":"Недопустимый приоритет"}],"requestId":"..."}}
+```
+
+## Пример
+
+```bash
+curl -X POST http://localhost:3000/api/equipment -H "Content-Type: application/json" -d '{"name":"Турбина A-1","type":"turbine","serialNumber":"WT-001","location":{"lat":55.75,"lon":37.61},"status":"operational","installedAt":"2020-01-01T00:00:00.000Z"}'
+```
+
+`helmet` устанавливает защитные заголовки, CORS разрешает только `CORS_ORIGINS`, а rate limit
+возвращает 429 и стандартные заголовки лимита. Каждый запрос получает `x-request-id`, который
+попадает в структурированный лог и ответ ошибки.
+
+## Структура
+
+`src/routes` маршруты, `src/services` бизнес-правила, `src/repositories` JSON-хранилище,
+`src/middleware` request ID, логирование, валидация и ошибки, `src/app.js` сборка приложения,
+`src/server.js` запуск. Тесты запускаются `npm test`, проверка `npm run check`.
+
+---
 
 CLI-утилита на Node.js для получения краткого погодного дайджеста по одному или нескольким городам через REST API Open-Meteo. Приложение:
 
