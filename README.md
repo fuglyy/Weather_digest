@@ -9,8 +9,51 @@ Open-Meteo из исходного погодного модуля.
 ```bash
 npm install
 cp .env.example .env
+docker compose up -d postgres
+npm run db:migrate
 npm start
 ```
+
+## PostgreSQL и Docker
+
+Проект подготовлен под PostgreSQL 16, который запускается через Docker Compose.
+
+```bash
+docker compose up -d postgres
+```
+
+Параметры подключения берутся из переменных окружения:
+
+- `DB_HOST`
+- `DB_PORT`
+- `DB_NAME`
+- `DB_USER`
+- `DB_PASSWORD`
+- `DB_POOL_MIN`
+- `DB_POOL_MAX`
+- `DB_POOL_IDLE_TIMEOUT`
+
+Миграции применяются командой:
+
+```bash
+npm run db:migrate
+```
+
+Для включения PostgreSQL-репозитория в приложении установите `USE_POSTGRES=true` в `.env`.
+
+Для загрузки демонстрационных данных используйте:
+
+```bash
+npm run db:seed
+```
+
+Откат миграций:
+
+```bash
+npm run db:migrate:undo
+```
+
+Схема хранится в каталоге `src/db/migrations`, модели — в `src/db/models`, а seed-данные — в `src/db/seeders`.
 
 Сервис доступен на `http://localhost:3000`. Старый CLI запускается через `npm run cli -- --city "Москва" --days 3`.
 

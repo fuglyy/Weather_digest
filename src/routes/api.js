@@ -10,6 +10,7 @@ import { requestService } from '../services/requestService.js';
 
 const send = (res, data, status = 200) => res.status(status).json({ data });
 const idValidation = (req) => isUuid(req.params.id) ? [] : [{ field: 'id', message: 'Ожидается UUID' }];
+const siteIdValidation = (req) => typeof req.params.id === 'string' && req.params.id.trim().length > 0 ? [] : [{ field: 'id', message: 'Поле обязательно' }];
 
 export function createApiRouter(services = {}) {
   const router = express.Router();
@@ -50,6 +51,17 @@ export function createApiRouter(services = {}) {
   if (!req.body || typeof req.body.status !== 'string') throw new ValidationError([{ field: 'status', message: 'Поле обязательно' }]);
   return send(res, await requests.changeStatus(req.params.id, req.body.status));
   }));
+  router.post('/requests/:id/assignees', validateRequest(idValidation), asyncHandler(async (req, res) => {
+    const payload = Array.isArray(req.body) ? req.body : (req.body?.assignees || []);
+    return send(res, await requests.assignTechnicians(req.params.id, payload), 201);
+  }));
+  router.delete('/requests/:id/assignees/:userId', validateRequest(idValidation), asyncHandler(async (req, res) => {
+    await requests.removeAssignee(req.params.id, req.params.userId);
+    return res.status(204).send();
+  }));
+  router.get('/requests/:id/history', validateRequest(idValidation), asyncHandler(async (req, res) => send(res, await requests.history(req.params.id))));
+  router.get('/sites/:id/summary', validateRequest(siteIdValidation), asyncHandler(async (req, res) => send(res, await requests.siteSummary(req.params.id))));
+  router.get('/reports/equipment-load', asyncHandler(async (req, res) => send(res, await requests.equipmentLoad(req.query))));
   router.delete('/requests/:id', validateRequest(idValidation), asyncHandler(async (req, res) => { await requests.remove(req.params.id); res.status(204).send(); }));
 
   return router;

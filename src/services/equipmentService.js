@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 
 import { ConflictError, NotFoundError, ValidationError } from '../errors/index.js';
 import { requestRepository } from '../repositories/fileRepository.js';
+import { createDefaultRepositories } from '../repositories/postgresRepository.js';
 
 const types = ['turbine', 'inverter', 'sensor', 'substation'];
 const statuses = ['operational', 'maintenance', 'fault', 'decommissioned'];
@@ -53,4 +54,5 @@ export function createEquipmentService(equipmentRepository) {
   };
 }
 
-export const equipmentService = createEquipmentService((await import('../repositories/fileRepository.js')).equipmentRepository);
+const defaultRepositories = await createDefaultRepositories();
+export const equipmentService = createEquipmentService(defaultRepositories.equipmentRepository);
