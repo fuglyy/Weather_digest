@@ -6,7 +6,10 @@
   "variable": [
     { "key": "baseUrl", "value": "http://localhost:3000" },
     { "key": "equipmentId", "value": "" },
-    { "key": "requestId", "value": "" }
+    { "key": "requestId", "value": "" },
+    { "key": "leadTechnicianId", "value": "99999999-9999-4999-8999-999999999999" },
+    { "key": "memberTechnicianId", "value": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" },
+    { "key": "siteId", "value": "11111111-1111-4111-8111-111111111111" }
   ],
   "item": [
     {
@@ -23,6 +26,7 @@
           "event": [{ "listen": "test", "script": { "exec": ["pm.test('201', function () { pm.response.to.have.status(201); });", "pm.collectionVariables.set('equipmentId', pm.response.json().data.id);"] } }]
         },
         { "name": "List equipment", "request": { "method": "GET", "url": "{{baseUrl}}/api/equipment?page=1&limit=20" } },
+        { "name": "List equipment (filtered/sorted)", "request": { "method": "GET", "url": "{{baseUrl}}/api/equipment?type=turbine&status=operational&sortBy=name&order=asc&page=1&limit=10" } },
         { "name": "Equipment requests", "request": { "method": "GET", "url": "{{baseUrl}}/api/equipment/{{equipmentId}}/requests" } },
         { "name": "Equipment weather", "request": { "method": "GET", "url": "{{baseUrl}}/api/equipment/{{equipmentId}}/weather" } },
         { "name": "Duplicate serial (409)", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\"name\":\"Duplicate\",\"type\":\"sensor\",\"serialNumber\":\"WT-001\",\"location\":{\"lat\":1,\"lon\":1},\"status\":\"operational\",\"installedAt\":\"2020-01-01\"}" }, "url": "{{baseUrl}}/api/equipment" }, "event": [{ "listen": "test", "script": { "exec": ["pm.test('409', function () { pm.response.to.have.status(409); });"] } }] }
@@ -37,9 +41,19 @@
           "event": [{ "listen": "test", "script": { "exec": ["pm.test('201', function () { pm.response.to.have.status(201); });", "pm.collectionVariables.set('requestId', pm.response.json().data.id);"] } }]
         },
         { "name": "List requests", "request": { "method": "GET", "url": "{{baseUrl}}/api/requests?status=new&page=1&limit=20" } },
+        { "name": "List requests (filtered/sorted)", "request": { "method": "GET", "url": "{{baseUrl}}/api/requests?priority=high&sortBy=createdAt&order=desc&page=1&limit=10" } },
         { "name": "Invalid status transition (409)", "request": { "method": "PATCH", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\"status\":\"done\"}" }, "url": "{{baseUrl}}/api/requests/{{requestId}}/status" }, "event": [{ "listen": "test", "script": { "exec": ["pm.test('409', function () { pm.response.to.have.status(409); });"] } }] },
+        { "name": "Assign technicians", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"assignees\": [\n    { \"userId\": \"{{leadTechnicianId}}\", \"role\": \"lead\", \"hours\": 2 },\n    { \"userId\": \"{{memberTechnicianId}}\", \"role\": \"member\", \"hours\": 1 }\n  ]\n}" }, "url": "{{baseUrl}}/api/requests/{{requestId}}/assignees" } },
         { "name": "Move to in progress", "request": { "method": "PATCH", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\"status\":\"in_progress\"}" }, "url": "{{baseUrl}}/api/requests/{{requestId}}/status" } },
+        { "name": "Request status history", "request": { "method": "GET", "url": "{{baseUrl}}/api/requests/{{requestId}}/history" } },
         { "name": "Unknown request (404)", "request": { "method": "GET", "url": "{{baseUrl}}/api/requests/00000000-0000-4000-8000-000000000000" }, "event": [{ "listen": "test", "script": { "exec": ["pm.test('404', function () { pm.response.to.have.status(404); });"] } }] }
+      ]
+    },
+    {
+      "name": "Analytics",
+      "item": [
+        { "name": "Site summary", "request": { "method": "GET", "url": "{{baseUrl}}/api/sites/{{siteId}}/summary" } },
+        { "name": "Equipment load (month)", "request": { "method": "GET", "url": "{{baseUrl}}/api/reports/equipment-load?period=month&minRequests=1&siteId={{siteId}}" } }
       ]
     }
   ]
