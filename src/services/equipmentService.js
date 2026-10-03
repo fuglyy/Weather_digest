@@ -6,6 +6,7 @@ import { createDefaultRepositories } from '../repositories/postgresRepository.js
 
 const types = ['turbine', 'inverter', 'sensor', 'substation'];
 const statuses = ['operational', 'maintenance', 'fault', 'decommissioned'];
+const sortColumns = new Set(['name', 'type', 'serialNumber', 'status', 'installedAt']);
 
 function validatePayload(payload, partial = false) {
   const details = [];
@@ -21,19 +22,20 @@ function validatePayload(payload, partial = false) {
 }
 
 function cleanPayload(payload) {
-  return Object.fromEntries(['name', 'type', 'serialNumber', 'location', 'status', 'installedAt'].filter((key) => payload[key] !== undefined).map((key) => [key, payload[key]]));
+  return Object.fromEntries(['siteId', 'name', 'type', 'serialNumber', 'location', 'status', 'installedAt'].filter((key) => payload[key] !== undefined).map((key) => [key, payload[key]]));
 }
 
 function paginate(records, query) {
   const filtered = records.filter((record) => (!query.type || record.type === query.type) && (!query.status || record.status === query.status));
-  const sorted = [...filtered].sort((a, b) => String(a[query.sortBy || 'name']).localeCompare(String(b[query.sortBy || 'name'])) * (query.order === 'desc' ? -1 : 1));
+  const sortBy = sortColumns.has(query.sortBy) ? query.sortBy : 'name';
+  const sorted = [...filtered].sort((a, b) => String(a[sortBy] ?? '').localeCompare(String(b[sortBy] ?? '')) * (query.order === 'desc' ? -1 : 1));
   const page = Number(query.page || 1); const limit = Number(query.limit || 20);
   return { data: sorted.slice((page - 1) * limit, page * limit), meta: { total: sorted.length, page, limit } };
 }
 
-export function createEquipmentService(equipmentRepository) {
+export function createEquipmentService(equipmentRepository, requestsRepository = requestRepository) {
   return {
-    async list(query) { return paginate(await equipmentRepository.findAll(), query); },
+    async list(query) { return equipmentRepository.list ? equipmentRepository.list(query) : paginate(await equipmentRepository.findAll(), query); },
     async get(id) { const item = await equipmentRepository.findById(id); if (!item) throw new NotFoundError('Оборудование не найдено'); return item; },
     async create(payload) {
       const details = validatePayload(payload); if (details.length) throw new ValidationError(details);
@@ -46,7 +48,7 @@ export function createEquipmentService(equipmentRepository) {
       return equipmentRepository.update(id, cleanPayload(payload));
     },
     async remove(id) {
-      await this.get(id); const requests = await requestRepository.findAll();
+      await this.get(id); const requests = await requestsRepository.findAll();
       if (requests.some((request) => request.equipmentId === id && !['done', 'rejected'].includes(request.status))) throw new ConflictError('Нельзя удалить оборудование с открытыми заявками');
       await equipmentRepository.remove(id);
     },
@@ -55,4 +57,4 @@ export function createEquipmentService(equipmentRepository) {
 }
 
 const defaultRepositories = await createDefaultRepositories();
-export const equipmentService = createEquipmentService(defaultRepositories.equipmentRepository);
+export const equipmentService = createEquipmentService(defaultRepositories.equipmentRepository, defaultRepositories.requestRepository);

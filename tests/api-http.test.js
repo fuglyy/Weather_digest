@@ -12,7 +12,7 @@ function createTestApp() {
   const requestRepository = createMemoryRepository();
   const equipmentService = createEquipmentService(equipmentRepository);
   const requestService = createRequestService(requestRepository, equipmentRepository);
-  return { app: createApp({ equipmentService, requestService, weatherClient: async () => ({ daily: { time: ['2026-09-18'], precipitation_sum: [0], wind_speed_10m_max: [3] } }) }), equipmentService, requestService };
+  return { app: createApp({ equipmentService, requestService, databaseHealthCheck: async () => {}, weatherClient: async () => ({ daily: { time: ['2026-09-18'], precipitation_sum: [0], wind_speed_10m_max: [3] } }) }), equipmentService, requestService };
 }
 
 const equipmentPayload = { name: 'Турбина A-1', type: 'turbine', serialNumber: 'WT-001', location: { lat: 55.75, lon: 37.61 }, status: 'operational', installedAt: '2020-01-01T00:00:00.000Z' };
@@ -32,6 +32,11 @@ test('API creates equipment and request, then validates status transitions', asy
   ]).expect(201);
   await request(app).patch(`/api/requests/${id}/status`).send({ status: 'in_progress' }).expect(200);
   await request(app).patch(`/api/requests/${id}/status`).send({ status: 'done' }).expect(200);
+  const history = await request(app).get(`/api/requests/${id}/history`).expect(200);
+  assert.deepEqual(history.body.data.map((entry) => [entry.oldStatus, entry.newStatus]), [
+    ['new', 'in_progress'],
+    ['in_progress', 'done'],
+  ]);
 });
 
 test('API rejects duplicate serial number and returns consistent errors', async () => {
@@ -51,6 +56,27 @@ test('API returns paginated lists and request id for unknown route', async () =>
   const missing = await request(app).get('/api/missing').expect(404);
   assert.equal(missing.body.error.code, 'NOT_FOUND');
   assert.ok(missing.body.error.requestId);
+});
+
+test('health reports an unavailable PostgreSQL connection', async () => {
+  const previous = process.env.USE_POSTGRES;
+  process.env.USE_POSTGRES = 'true';
+  try {
+    const app = createApp({ databaseHealthCheck: async () => { throw new Error('database offline'); } });
+    const response = await request(app).get('/api/health').expect(503);
+    assert.deepEqual(response.body.data, { status: 'unavailable', database: 'disconnected' });
+  } finally {
+    if (previous === undefined) delete process.env.USE_POSTGRES;
+    else process.env.USE_POSTGRES = previous;
+  }
+});
+
+test('API maps PostgreSQL unique constraint errors to 409', async () => {
+  const error = new Error('duplicate key');
+  error.parent = { code: '23505' };
+  const app = createApp({ equipmentService: { create: async () => { throw error; } } });
+  const response = await request(app).post('/api/equipment').send({}).expect(409);
+  assert.equal(response.body.error.code, 'CONFLICT');
 });
 
 test('API returns site summary and equipment load report', async () => {
@@ -78,4 +104,5 @@ test('API returns site summary and equipment load report', async () => {
   assert.equal(load.body.data.period, 'all');
   assert.ok(Array.isArray(load.body.data.data));
   assert.ok(load.body.data.data.some((item) => item.equipmentId === 'eq-1' && item.totalRequests >= 2));
+  await request(app).get('/api/reports/equipment-load?period=forever').expect(422);
 });

@@ -1,7 +1,5 @@
 import { randomUUID } from 'node:crypto';
 
-import { sequelize } from '../db/index.js';
-import { RequestStatusHistory } from '../db/models/index.js';
 import { ConflictError, NotFoundError, ValidationError } from '../errors/index.js';
 import { equipmentRepository } from '../repositories/fileRepository.js';
 import { createDefaultRepositories } from '../repositories/postgresRepository.js';
@@ -40,19 +38,19 @@ function getAssignees(record) {
   return [];
 }
 
-function canUsePostgresTransactions() {
-  return process.env.USE_POSTGRES === 'true' && sequelize?.getDialect && sequelize.getDialect() === 'postgres';
-}
+const requestSortColumns = new Set(['title', 'priority', 'status', 'plannedAt', 'createdAt', 'updatedAt']);
 
 export function createRequestService(requestRepository, equipmentRepo = equipmentRepository) {
   return {
     async list(query = {}) {
+      if (requestRepository.list) return requestRepository.list(query);
       let records = await requestRepository.findAll();
       if (query.equipmentId) records = records.filter((record) => record.equipmentId === query.equipmentId);
       if (query.status) records = records.filter((record) => record.status === query.status);
       if (query.priority) records = records.filter((record) => record.priority === query.priority);
       const page = Number(query.page || 1); const limit = Number(query.limit || 20);
-      records.sort((a, b) => new Date(a[query.sortBy || 'createdAt']) - new Date(b[query.sortBy || 'createdAt']));
+      const sortBy = requestSortColumns.has(query.sortBy) ? query.sortBy : 'createdAt';
+      records.sort((a, b) => new Date(a[sortBy]) - new Date(b[sortBy]));
       if (query.order === 'desc') records.reverse();
       return { data: records.slice((page - 1) * limit, page * limit), meta: { total: records.length, page, limit } };
     },
@@ -77,30 +75,19 @@ export function createRequestService(requestRepository, equipmentRepo = equipmen
       }
 
       const updatedAt = new Date().toISOString();
-      if (canUsePostgresTransactions()) {
-        const t = await sequelize.transaction();
-        try {
-          const updated = await requestRepository.update(id, { status, updatedAt }, { transaction: t });
-          await RequestStatusHistory.create({
-            requestId: id,
-            oldStatus: request.status,
-            newStatus: status,
-            changedBy: 'system',
-            comment: `Статус изменён на ${status}`,
-            createdAt: new Date(),
-          }, { transaction: t });
-          await t.commit();
-          return updated;
-        } catch (error) {
-          await t.rollback();
-          throw error;
-        }
+      if (requestRepository.changeStatusWithHistory) {
+        const updated = await requestRepository.changeStatusWithHistory(id, request.status, status, updatedAt);
+        if (!updated) throw new ConflictError('Заявка была изменена параллельно; повторите запрос');
+        return updated;
       }
-
-      return requestRepository.update(id, { status, updatedAt });
+      const statusHistory = [...(request.statusHistory || []), {
+        id: randomUUID(), requestId: id, oldStatus: request.status, newStatus: status,
+        changedBy: 'system', comment: `Статус изменён на ${status}`, createdAt: updatedAt,
+      }];
+      return requestRepository.update(id, { status, updatedAt, statusHistory });
     },
     async assignTechnicians(id, assignees) {
-      const request = await this.get(id);
+      await this.get(id);
       const list = normalizeAssignees(assignees);
       if (!list.length) throw new ValidationError([{ field: 'assignees', message: 'Список назначений обязателен' }]);
       const seen = new Set();
@@ -115,25 +102,23 @@ export function createRequestService(requestRepository, equipmentRepo = equipmen
       if (leadCount !== 1) throw new ValidationError([{ field: 'assignees', message: 'В бригаде должен быть ровно один lead' }]);
 
       const updatedAt = new Date().toISOString();
-      if (canUsePostgresTransactions()) {
-        const t = await sequelize.transaction();
-        try {
-          const updated = await requestRepository.update(id, { assignees: list, assignedTechnicians: list, updatedAt }, { transaction: t });
-          await t.commit();
-          return { requestId: id, assignees: list, currentRequest: request, updated };
-        } catch (error) {
-          await t.rollback();
-          throw error;
-        }
-      }
-
-      const updated = await requestRepository.update(id, { assignees: list, assignedTechnicians: list, updatedAt });
-      return { requestId: id, assignees: list, currentRequest: request, updated };
+      const updated = requestRepository.replaceAssignees
+        ? await requestRepository.replaceAssignees(id, list, updatedAt)
+        : await requestRepository.update(id, { assignees: list, assignedTechnicians: list, updatedAt });
+      return { requestId: id, assignees: list, currentRequest: updated, updated };
     },
     async removeAssignee(id, userId) {
       const request = await this.get(id);
       if (!userId) throw new ValidationError([{ field: 'userId', message: 'Поле обязательно' }]);
       const assignees = normalizeAssignees(getAssignees(request));
+      if (requestRepository.removeAssignee) {
+        if (assignees.some((entry) => String(entry.userId) === String(userId) && entry.role === 'lead')) {
+          throw new ConflictError('Нельзя удалить lead без одновременной замены бригады');
+        }
+        const deleted = await requestRepository.removeAssignee(id, userId, new Date().toISOString());
+        if (!deleted) throw new NotFoundError('Исполнитель не найден');
+        return { requestId: id, removedUserId: userId };
+      }
       const filtered = assignees.filter((entry) => String(entry.userId) !== String(userId));
       if (filtered.length === assignees.length) throw new NotFoundError('Исполнитель не найден');
       const updatedAt = new Date().toISOString();
@@ -143,21 +128,15 @@ export function createRequestService(requestRepository, equipmentRepo = equipmen
     async history(id) {
       const request = await this.get(id);
       const history = Array.isArray(request.statusHistory) ? request.statusHistory : [];
-      if (history.length > 0) return history;
-      return [
-        {
-          id: randomUUID(),
-          requestId: id,
-          oldStatus: 'new',
-          newStatus: request.status,
-          changedBy: 'system',
-          comment: 'Статус обновлён',
-          createdAt: new Date().toISOString(),
-        },
-      ];
+      return history;
     },
     async siteSummary(siteId) {
       if (!siteId) throw new ValidationError([{ field: 'siteId', message: 'Поле обязательно' }]);
+      if (requestRepository.siteSummary) {
+        const summary = await requestRepository.siteSummary(siteId);
+        if (!summary) throw new NotFoundError('Площадка не найдена');
+        return summary;
+      }
       const equipment = await equipmentRepo.findAll();
       const requests = await requestRepository.findAll();
       const siteEquipmentIds = new Set(equipment.filter((item) => item.siteId === siteId).map((item) => item.id));
@@ -186,13 +165,16 @@ export function createRequestService(requestRepository, equipmentRepo = equipmen
       };
     },
     async equipmentLoad(query = {}) {
+      if (requestRepository.equipmentLoad) return requestRepository.equipmentLoad(query);
       const requests = await requestRepository.findAll();
       const equipment = await equipmentRepo.findAll();
       const equipmentMap = new Map(equipment.map((item) => [item.id, item]));
       const minRequests = Number(query.minRequests || 0);
+      const startAt = reportPeriodStart(query.period || 'all');
       const stats = new Map();
 
       for (const request of requests) {
+        if (startAt && new Date(request.createdAt) < startAt) continue;
         const item = equipmentMap.get(request.equipmentId);
         if (!item) continue;
         if (query.siteId && item.siteId !== query.siteId) continue;
@@ -225,6 +207,11 @@ export function createRequestService(requestRepository, equipmentRepo = equipmen
     },
     async remove(id) { await this.get(id); await requestRepository.remove(id); },
   };
+}
+
+function reportPeriodStart(period) {
+  const days = { week: 7, month: 30, quarter: 90 }[period];
+  return days ? new Date(Date.now() - days * 24 * 60 * 60 * 1000) : null;
 }
 
 const defaultRepositories = await createDefaultRepositories();

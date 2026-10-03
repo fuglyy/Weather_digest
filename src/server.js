@@ -4,9 +4,9 @@ import { connectDatabase } from './db/index.js';
 
 async function startServer() {
   try {
-    await connectDatabase();
+    if (process.env.USE_POSTGRES === 'true') await connectDatabase();
     app.listen(config.port, () => {
-      console.log(`Weather maintenance API is listening on port ${config.port}`);
+      console.log(`Weather maintenance API is listening on port ${config.port}${process.env.USE_POSTGRES === 'true' ? ' (PostgreSQL)' : ' (JSON storage)'}`);
     });
   } catch (error) {
     console.error('Failed to start application. Check PostgreSQL connection settings and Docker status.');

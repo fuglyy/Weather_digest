@@ -5,6 +5,7 @@ import { config } from '../config.js';
 import { ExternalServiceError, ValidationError } from '../errors/index.js';
 import { asyncHandler } from '../middleware/http.js';
 import { isUuid, listQuery, validateRequest } from '../middleware/validate.js';
+import { sequelize } from '../db/index.js';
 import { equipmentService } from '../services/equipmentService.js';
 import { requestService } from '../services/requestService.js';
 
@@ -17,8 +18,19 @@ export function createApiRouter(services = {}) {
   const equipment = services.equipmentService || equipmentService;
   const requests = services.requestService || requestService;
   const weatherClient = services.weatherClient || getForecast;
+  const databaseHealthCheck = services.databaseHealthCheck || (() => sequelize.authenticate());
 
-  router.get('/health', (_req, res) => res.json({ data: { status: 'ok' } }));
+  router.get('/health', asyncHandler(async (_req, res) => {
+    if (process.env.USE_POSTGRES === 'true') {
+      try {
+        await databaseHealthCheck();
+      } catch {
+        return res.status(503).json({ data: { status: 'unavailable', database: 'disconnected' } });
+      }
+      return res.json({ data: { status: 'ok', database: 'connected' } });
+    }
+    return res.json({ data: { status: 'ok', database: 'not-configured' } });
+  }));
 
   router.get('/equipment', validateRequest(listQuery), asyncHandler(async (req, res) => send(res, await equipment.list(req.query))));
   router.post('/equipment', asyncHandler(async (req, res) => {
@@ -61,7 +73,13 @@ export function createApiRouter(services = {}) {
   }));
   router.get('/requests/:id/history', validateRequest(idValidation), asyncHandler(async (req, res) => send(res, await requests.history(req.params.id))));
   router.get('/sites/:id/summary', validateRequest(siteIdValidation), asyncHandler(async (req, res) => send(res, await requests.siteSummary(req.params.id))));
-  router.get('/reports/equipment-load', asyncHandler(async (req, res) => send(res, await requests.equipmentLoad(req.query))));
+  router.get('/reports/equipment-load', validateRequest((req) => {
+    const errors = [];
+    if (req.query.period && !['all', 'week', 'month', 'quarter'].includes(req.query.period)) errors.push({ field: 'period', message: 'Допустимые значения: all, week, month, quarter' });
+    if (req.query.minRequests !== undefined && (!Number.isInteger(Number(req.query.minRequests)) || Number(req.query.minRequests) < 0)) errors.push({ field: 'minRequests', message: 'Ожидается неотрицательное целое число' });
+    if (req.query.siteId && !isUuid(req.query.siteId)) errors.push({ field: 'siteId', message: 'Ожидается UUID' });
+    return errors;
+  }), asyncHandler(async (req, res) => send(res, await requests.equipmentLoad(req.query))));
   router.delete('/requests/:id', validateRequest(idValidation), asyncHandler(async (req, res) => { await requests.remove(req.params.id); res.status(204).send(); }));
 
   return router;

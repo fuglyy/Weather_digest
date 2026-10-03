@@ -28,9 +28,19 @@ export function notFoundHandler(req, res, next) {
 }
 
 export function errorHandler(error, req, res, _next) {
-  const status = error.status || 500;
-  const code = error.code || 'INTERNAL_ERROR';
-  const message = status >= 500 && process.env.NODE_ENV === 'production' ? 'Внутренняя ошибка сервера' : error.message || 'Внутренняя ошибка сервера';
+  const databaseCode = error.parent?.code || error.original?.code;
+  const databaseError = databaseCode === '23505'
+    ? { status: 409, code: 'CONFLICT', message: 'Запись с такими данными уже существует' }
+    : databaseCode === '23503'
+      ? { status: 409, code: 'REFERENCE_CONFLICT', message: 'Связанная запись не найдена или используется' }
+      : ['23502', '22P02', '22003'].includes(databaseCode) || error.name === 'SequelizeValidationError'
+        ? { status: 422, code: 'VALIDATION_ERROR', message: 'Данные не прошли проверку' }
+        : null;
+  const status = error.status || databaseError?.status || 500;
+  const code = error.code || databaseError?.code || 'INTERNAL_ERROR';
+  const message = status >= 500 && process.env.NODE_ENV === 'production'
+    ? 'Внутренняя ошибка сервера'
+    : error.status ? error.message : databaseError?.message || error.message || 'Внутренняя ошибка сервера';
   if (status >= 500) console.error(JSON.stringify({ level: 'error', requestId: req.requestId, error: error.message, stack: error.stack }));
   res.status(status).json({ error: { code, message, details: error.details || [], requestId: req.requestId } });
 }
