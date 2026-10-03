@@ -1,26 +1,33 @@
 # Weather Digest / Maintenance API
 
 REST API для учёта оборудования и заявок на обслуживание производственной площадки.
-Данные хранятся в JSON-файлах через отдельный repository layer; внешний прогноз использует
-Open-Meteo из исходного погодного модуля.
+Хранилище выбирается через `USE_POSTGRES`: `false` использует JSON-файлы, `true` — PostgreSQL.
+Внешний прогноз использует Open-Meteo.
 
 ## Быстрый запуск API
 
 ```bash
 npm install
-cp .env.example .env
-docker compose up -d postgres
-npm run db:migrate
 npm start
 ```
+
+Сервер по умолчанию использует JSON-файлы. Чтобы включить PostgreSQL, настройте `.env` по примеру ниже.
 
 ## PostgreSQL и Docker
 
 Проект подготовлен под PostgreSQL 16, который запускается через Docker Compose.
 
 ```bash
+Copy-Item .env.example .env
+# задайте уникальный DB_PASSWORD и установите USE_POSTGRES=true в .env
 docker compose up -d postgres
+npm run db:migrate
+npm run db:seed
+npm start
 ```
+
+При `USE_POSTGRES=true` сервер проверяет подключение при старте и завершается с кодом 1, если БД недоступна. Он не переключается незаметно на JSON.
+Для локального запуска PostgreSQL задайте `DB_PASSWORD` в `.env`; пароль не хранится в коде и не коммитьте `.env`.
 
 Параметры подключения берутся из переменных окружения:
 
@@ -47,15 +54,43 @@ npm run db:migrate
 npm run db:seed
 ```
 
+Seed создаёт 2 площадки, 6 единиц оборудования, 20 заявок и 5 специалистов. Если в `DATA_DIR` уже лежат `equipment.json` и `requests.json` из Кейса 2, seed импортирует их и сохраняет связь заявок с оборудованием. Без этих файлов создаются демонстрационные записи. Seed рассчитан на чистую БД и выполняется один раз.
+
 Откат миграций:
 
 ```bash
 npm run db:migrate:undo
 ```
 
+Полный откат схемы (удаляет все таблицы, созданные миграциями):
+
+```bash
+npm run db:migrate:undo:all
+```
+
 Схема хранится в каталоге `src/db/migrations`, модели — в `src/db/models`, а seed-данные — в `src/db/seeders`.
 
 Сервис доступен на `http://localhost:3000`. Старый CLI запускается через `npm run cli -- --city "Москва" --days 3`.
+
+## Схема PostgreSQL
+
+```mermaid
+erDiagram
+  SITES ||--o{ EQUIPMENT : contains
+  EQUIPMENT ||--o| EQUIPMENT_PASSPORTS : has
+  EQUIPMENT ||--o{ MAINTENANCE_REQUESTS : receives
+  MAINTENANCE_REQUESTS ||--o{ REQUEST_STATUS_HISTORY : records
+  MAINTENANCE_REQUESTS ||--o{ REQUEST_ASSIGNEES : assigns
+  TECHNICIANS ||--o{ REQUEST_ASSIGNEES : works
+```
+
+`request_assignees` реализует связь N:M и запрещает повторную пару `(request_id, technician_id)` уникальным индексом. Удаление площадки с оборудованием и оборудования с заявками запрещено (`RESTRICT`); паспорт удаляется вместе с оборудованием, назначения — вместе с заявкой. История статусов сохраняется и блокирует физическое удаление заявки (`RESTRICT`).
+
+## Отчёты
+
+- `GET /api/sites/:id/summary` возвращает количество заявок площадки по статусам и приоритетам и среднее время закрытия завершённых заявок.
+- `GET /api/reports/equipment-load?period=month&minRequests=2&siteId=<uuid>` группирует заявки по оборудованию. Период: `all`, `week`, `month` или `quarter`; `minRequests` применяется в SQL через `HAVING`.
+- Оба аналитических endpoint выполняют агрегаты в PostgreSQL при `USE_POSTGRES=true`.
 
 ## Переменные окружения API
 
@@ -76,8 +111,14 @@ npm run db:migrate:undo
 | GET/POST | `/api/requests` | Список / создание заявки |
 | GET/PATCH/DELETE | `/api/requests/:id` | Карточка, изменение, удаление |
 | PATCH | `/api/requests/:id/status` | Контролируемая смена статуса |
+| POST/DELETE | `/api/requests/:id/assignees` и `/api/requests/:id/assignees/:userId` | Назначение и снятие специалистов |
+| GET | `/api/requests/:id/history` | История смены статусов |
+| GET | `/api/sites/:id/summary` | Сводка площадки |
+| GET | `/api/reports/equipment-load` | Нагрузка на оборудование |
 
-Списки поддерживают `page`, `limit`, `sortBy`, `order`; оборудование фильтруется по `type` и
+`GET /api/health` проверяет PostgreSQL-соединение при `USE_POSTGRES=true` и возвращает 503 при недоступной БД.
+
+Списки поддерживают `page`, `limit`, `sortBy`, `order`; сортируемые поля ограничены allowlist. В PostgreSQL фильтрация, сортировка и пагинация выполняются в SQL. Оборудование фильтруется по `type` и
 `status`, заявки по `equipmentId`, `status` и `priority`. Ответ списка имеет вид `{ data, meta: { total, page, limit } }`.
 
 Заявка проходит переходы `new -> in_progress -> done`, а также `new -> rejected` и
