@@ -7,4 +7,5 @@ test('database config resolves PostgreSQL settings from environment', () => {
   assert.equal(dbConfig.development.dialect, 'postgres');
   assert.ok(dbConfig.development.host);
   assert.ok(dbConfig.development.database);
+  assert.notEqual(dbConfig.development.password, 'postgres');
 });

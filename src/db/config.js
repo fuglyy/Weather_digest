@@ -5,7 +5,7 @@ dotenv.config();
 export const dbConfig = {
   development: {
     username: process.env.DB_USER || 'postgres',
-    password: process.env.DB_PASSWORD || 'postgres',
+    password: process.env.DB_PASSWORD,
     database: process.env.DB_NAME || 'weather_digest',
     host: process.env.DB_HOST || 'localhost',
     port: Number(process.env.DB_PORT || 5432),
