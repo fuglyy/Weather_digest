@@ -1,4 +1,4 @@
-import test from 'node:test';
+import { test } from '@jest/globals';
 import assert from 'node:assert/strict';
 
 import { up as seedCase3 } from '../src/db/seeders/202610030001-case3-data.js';
