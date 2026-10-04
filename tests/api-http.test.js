@@ -1,4 +1,4 @@
-import test from 'node:test';
+import { test } from '@jest/globals';
 import assert from 'node:assert/strict';
 import request from 'supertest';
 
@@ -105,4 +105,40 @@ test('API returns site summary and equipment load report', async () => {
   assert.ok(Array.isArray(load.body.data.data));
   assert.ok(load.body.data.data.some((item) => item.equipmentId === 'eq-1' && item.totalRequests >= 2));
   await request(app).get('/api/reports/equipment-load?period=forever').expect(422);
+});
+
+test('metrics expose route counters and request duration histogram', async () => {
+  const app = createApp({ maintenanceMetrics: async () => '' });
+  await request(app).get('/api/health/live').expect(200);
+  const response = await request(app).get('/metrics').expect(200);
+  assert.match(response.text, /http_requests_total\{method="GET",route="\/api\/health\/live",status="200"\} 1/);
+  assert.match(response.text, /http_request_duration_seconds_bucket\{le="\+Inf"\}/);
+  assert.match(response.text, /http_request_duration_seconds_count 1/);
+});
+
+test('OpenAPI lists authentication, directory and maintenance endpoints', async () => {
+  const app = createApp({ maintenanceMetrics: async () => '' });
+  const spec = (await request(app).get('/api/openapi.json').expect(200)).body;
+  assert.equal(spec.openapi, '3.0.3');
+  for (const path of [
+    '/api/auth/register', '/api/auth/login', '/api/auth/refresh', '/api/auth/logout', '/api/auth/me',
+    '/api/sites', '/api/sites/{id}', '/api/technicians', '/api/technicians/{id}',
+    '/api/equipment', '/api/requests', '/api/requests/{id}/status', '/api/reports/equipment-load',
+  ]) assert.ok(spec.paths[path], `Missing OpenAPI path ${path}`);
+  assert.deepEqual(spec.components.securitySchemes.bearerAuth, { type: 'http', scheme: 'bearer', bearerFormat: 'JWT' });
+});
+
+test('directory endpoints delegate list and create to directory service', async () => {
+  const createdSite = { id: '11111111-1111-4111-8111-111111111111', name: 'North', code: 'NORTH', region: 'North', lat: 60, lon: 30 };
+  const directoryService = {
+    listSites: async () => ({ data: [createdSite], meta: { total: 1, page: 1, limit: 20 } }),
+    createSite: async (payload) => ({ id: createdSite.id, ...payload }),
+    listTechnicians: async () => ({ data: [], meta: { total: 0, page: 1, limit: 20 } }),
+  };
+  const app = createApp({ directoryService, maintenanceMetrics: async () => '' });
+  const sites = await request(app).get('/api/sites').expect(200);
+  assert.equal(sites.body.data.data[0].code, 'NORTH');
+  const created = await request(app).post('/api/sites').send(createdSite).expect(201);
+  assert.equal(created.body.data.name, 'North');
+  await request(app).get('/api/technicians').expect(200);
 });
