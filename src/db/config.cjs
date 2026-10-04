@@ -9,6 +9,8 @@ module.exports = {
     port: Number(process.env.DB_PORT || 5432),
     dialect: 'postgres',
     logging: false,
+    seederStorage: 'sequelize',
+    seederStorageTableName: 'SequelizeData',
     pool: {
       max: Number(process.env.DB_POOL_MAX || 10),
       min: Number(process.env.DB_POOL_MIN || 0),
