@@ -1,0 +1,16 @@
+route:
+  receiver: api-log
+  group_by: [alertname]
+  group_wait: 10s
+  group_interval: 1m
+  repeat_interval: 1h
+
+receivers:
+  - name: api-log
+    webhook_configs:
+      - url: http://api:3000/internal/alerts
+        send_resolved: true
+        http_config:
+          authorization:
+            type: Bearer
+            credentials: ${ALERT_WEBHOOK_TOKEN}

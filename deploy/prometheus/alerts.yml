@@ -1,0 +1,19 @@
+groups:
+  - name: weather-digest-api
+    rules:
+      - alert: ApiTargetDown
+        expr: up{job="weather-digest-api"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: Weather Digest API is unavailable
+          description: Prometheus cannot scrape the API metrics endpoint.
+      - alert: ApiHigh5xxRate
+        expr: sum(rate(http_requests_total{status=~"5.."}[5m])) / clamp_min(sum(rate(http_requests_total[5m])), 1) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: API 5xx response rate is above 5%
+          description: Inspect API logs using the requestId and check PostgreSQL readiness.
