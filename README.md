@@ -8,10 +8,10 @@ REST API для учёта оборудования и заявок на обс�
 
 ```bash
 npm install
-npm start
+npm run dev
 ```
 
-Сервер по умолчанию использует JSON-файлы. Чтобы включить PostgreSQL, настройте `.env` по примеру ниже.
+Локальный режим использует JSON-хранилище. Для полного эксплуатационного стека используйте Compose.
 
 ## PostgreSQL и Docker
 
@@ -19,15 +19,24 @@ npm start
 
 ```bash
 Copy-Item .env.example .env
-# задайте уникальный DB_PASSWORD и установите USE_POSTGRES=true в .env
-docker compose up -d postgres
-npm run db:migrate
-npm run db:seed
-npm start
+# задайте уникальные DB_PASSWORD, JWT_SECRET, BOOTSTRAP_ADMIN_PASSWORD,
+# GRAFANA_ADMIN_PASSWORD и ALERT_WEBHOOK_TOKEN в .env
+docker compose up --build -d
 ```
 
-При `USE_POSTGRES=true` сервер проверяет подключение при старте и завершается с кодом 1, если БД недоступна. Он не переключается незаметно на JSON.
-Для локального запуска PostgreSQL задайте `DB_PASSWORD` в `.env`; пароль не хранится в коде и не коммитьте `.env`.
+Compose поднимает PostgreSQL, одноразовый шаг миграций и seed, API, Nginx, Prometheus, Alertmanager и Grafana. API ждёт готовности БД и завершения `db-setup`. Наружу опубликован только Nginx на порту 80; Grafana доступна через `http://localhost/grafana/` только с loopback/частной сети.
+
+При первом запуске в пустом auth-хранилище создаётся admin из `BOOTSTRAP_ADMIN_EMAIL` и `BOOTSTRAP_ADMIN_PASSWORD`. Хранилище лежит в Docker volume `api-data`; изменение bootstrap-переменных не меняет уже созданную учётную запись. Регистрация через API всегда создаёт `viewer`.
+
+Проверка стека и логи:
+
+```bash
+docker compose ps
+docker compose logs -f api
+docker compose logs -f alertmanager
+```
+
+Параметры подключения PostgreSQL задаются переменными окружения. Не коммитьте `.env`; для эксплуатации используйте уникальные случайные значения секретов.
 
 Параметры подключения берутся из переменных окружения:
 
@@ -54,7 +63,7 @@ npm run db:migrate
 npm run db:seed
 ```
 
-Seed создаёт 2 площадки, 6 единиц оборудования, 20 заявок и 5 специалистов. Если в `DATA_DIR` уже лежат `equipment.json` и `requests.json` из Кейса 2, seed импортирует их и сохраняет связь заявок с оборудованием. Без этих файлов создаются демонстрационные записи. Seed рассчитан на чистую БД и выполняется один раз.
+Seed создаёт 2 площадки, 6 единиц оборудования, 20 заявок и 5 специалистов. Если в `DATA_DIR` уже лежат `equipment.json` и `requests.json` из Кейса 2, seed импортирует их. Без этих файлов создаются демонстрационные записи. Compose отслеживает выполнение seed и не запускает его повторно после перезапуска стека.
 
 Откат миграций:
 
@@ -70,7 +79,7 @@ npm run db:migrate:undo:all
 
 Схема хранится в каталоге `src/db/migrations`, модели — в `src/db/models`, а seed-данные — в `src/db/seeders`.
 
-Сервис доступен на `http://localhost:3000`. Старый CLI запускается через `npm run cli -- --city "Москва" --days 3`.
+API доступен за Nginx на `http://localhost`; интерактивная документация — `http://localhost/api/docs/`, OpenAPI JSON — `http://localhost/api/openapi.json`. Старый CLI запускается через `npm run cli -- --city "Москва" --days 3`.
 
 ## Схема PostgreSQL
 
@@ -94,16 +103,32 @@ erDiagram
 
 ## Переменные окружения API
 
-`PORT`, `NODE_ENV`, `CORS_ORIGINS` (явный список origin через запятую), `RATE_LIMIT_WINDOW_MS`,
-`RATE_LIMIT_MAX`, `DATA_DIR`, `OUTDOOR_WIND_MAX`, `REQUEST_TIMEOUT_MS`, `GEOCODING_BASE_URL`,
-`FORECAST_BASE_URL`. Тело запроса ограничено 100 KB. Cookie сервис не использует, поэтому
-флаги SameSite/Secure/HttpOnly не применяются.
+Полный перечень и безопасные шаблоны находятся в `.env.example`. Для Compose обязательны `DB_PASSWORD`, `JWT_SECRET` (не менее 32 символов), `BOOTSTRAP_ADMIN_EMAIL`, `BOOTSTRAP_ADMIN_PASSWORD`, `GRAFANA_ADMIN_PASSWORD` и `ALERT_WEBHOOK_TOKEN`. `LOG_LEVEL` принимает `error`, `warn`, `info` или `debug`; `TRUST_PROXY=true` используется за Nginx. Access JWT по умолчанию живёт 900 секунд. Refresh token передаётся только в `HttpOnly` cookie с `SameSite=Lax`; в production установлен `Secure`, локальный HTTP использует `Secure=false`, иначе браузер не отправит cookie.
+
+## Роли
+
+| Роль | Доступ |
+| --- | --- |
+| `viewer` | Чтение справочников, оборудования, заявок, истории и отчётов |
+| `technician` | Права viewer, создание/редактирование заявок и смена статуса только назначенной заявки |
+| `admin` | Управление оборудованием, назначение бригад и удаление записей |
+
+Публичная регистрация всегда назначает `viewer`; роль из тела запроса игнорируется. Bootstrap admin создаётся только при пустом auth-хранилище. Вход ограничен пятью попытками за 15 минут; ответы для неизвестной учётной записи и неверного пароля одинаковы.
 
 ## API
 
 | Метод | Путь | Назначение |
 | --- | --- | --- |
+| POST | `/api/auth/register` | Регистрация viewer |
+| POST | `/api/auth/login` | Вход, выдача access token и refresh cookie |
+| POST | `/api/auth/refresh` | Обновление access token |
+| POST | `/api/auth/logout` | Отзыв refresh-сессии |
+| GET | `/api/auth/me` | Текущая учётная запись и роль |
 | GET | `/api/health` | Проверка доступности |
+| GET | `/api/health/live` | Жизнеспособность процесса |
+| GET | `/api/health/ready` | Готовность API и БД |
+| GET | `/api/docs/` | Swagger UI |
+| GET | `/api/openapi.json` | OpenAPI 3.0 |
 | GET/POST | `/api/equipment` | Список / создание оборудования |
 | GET/PATCH/DELETE | `/api/equipment/:id` | Карточка, изменение, удаление |
 | GET | `/api/equipment/:id/requests` | Заявки оборудования |
@@ -117,6 +142,8 @@ erDiagram
 | GET | `/api/reports/equipment-load` | Нагрузка на оборудование |
 
 `GET /api/health` проверяет PostgreSQL-соединение при `USE_POSTGRES=true` и возвращает 503 при недоступной БД.
+
+Изменяющие маршруты требуют bearer access token и соответствующую роль. Запрос без токена получает 401, недостаточная роль — 403. Метрики `/metrics` ограничены Nginx по IP; Prometheus опрашивает API по внутренней Docker-сети.
 
 Списки поддерживают `page`, `limit`, `sortBy`, `order`; сортируемые поля ограничены allowlist. В PostgreSQL фильтрация, сортировка и пагинация выполняются в SQL. Оборудование фильтруется по `type` и
 `status`, заявки по `equipmentId`, `status` и `priority`. Ответ списка имеет вид `{ data, meta: { total, page, limit } }`.
@@ -140,6 +167,20 @@ curl -X POST http://localhost:3000/api/equipment -H "Content-Type: application/j
 `helmet` устанавливает защитные заголовки, CORS разрешает только `CORS_ORIGINS`, а rate limit
 возвращает 429 и стандартные заголовки лимита. Каждый запрос получает `x-request-id`, который
 попадает в структурированный лог и ответ ошибки.
+
+## Мониторинг и эксплуатация
+
+Grafana dashboard `Maintenance API overview` provisioned автоматически. Технические графики используют `http_requests_total`, `http_request_duration_seconds` и Prometheus `up`; прикладные gauges считываются из PostgreSQL при scrape. Alertmanager отправляет `ApiTargetDown` и `ApiHigh5xxRate` во внутренний alert receiver API, который пишет событие в stdout. При срабатывании проверьте `docker compose logs api alertmanager`, найдите `requestId`, затем проверьте PostgreSQL и `GET /api/health/ready`.
+
+Если БД недоступна: проверьте `docker compose ps`, `docker compose logs postgres`, credentials и readiness; после восстановления Compose перезапустит API. При росте 5xx изучите структурированные логи API и соответствующий `requestId`. При нехватке диска проверьте Docker volumes и свободное место до очистки: `pgdata`, `api-data`, `prometheus-data` и `grafana-data` содержат данные. Не используйте `docker compose down -v` для обычной остановки.
+
+Миграции применяются при старте через `db-setup`. Откат одной миграции: `docker compose run --rm db-setup npm run db:migrate:undo`; полный откат схемы: `docker compose run --rm db-setup npm run db:migrate:undo:all`. Перед откатом сделайте резервную копию БД.
+
+Тесты запускаются командой `npm test`; `npm run test:coverage` формирует текстовый и lcov отчёт. Полный локальный gate: `npm run check`.
+
+## Архитектура и ограничения
+
+Маршруты находятся в `src/routes`, бизнес-правила — в `src/services`, PostgreSQL и JSON реализации — в `src/repositories`; история статусов и назначения хранятся отдельно. Статусная операция использует транзакционный repository-метод в PostgreSQL. Погодный прогноз зависит от Open-Meteo. Auth-store в production хранится в отдельном файловом Docker volume, поэтому текущий вариант рассчитан на один экземпляр API; для горизонтального масштабирования его следует перенести в общую PostgreSQL-схему. HTTPS и CI pipeline не входят в текущий обязательный стек.
 
 ## Структура
 
@@ -340,3 +381,71 @@ npm run check
 ## Примечание
 
 Проект реализован без стороннего HTTP-клиента, с использованием встроенного `fetch`, `async/await` и `AbortController` для ограничения времени запроса. Основная цель — консольный погодный дайджест с сохранением результатов в локальные JSON-отчёты.
+
+## Production readiness / Case 4
+
+Стек поддерживает базовую эксплуатационную готовность: аутентификацию, чтение токенов в заголовке `Authorization: Bearer ...`, refresh-cookie сессии, ограничение частоты попыток входа и маршрутизированный мониторинг.
+
+### Роли и права
+
+| Роль | Права |
+| --- | --- |
+| `viewer` | чтение справочников, заявок, истории и отчётов |
+| `technician` | `viewer` + создание, редактирование заявок и смена статуса только по назначенным заявкам |
+| `admin` | полный доступ к оборудованию, площадкам, назначению бригад и удалению |
+
+Для включения обязательной аутентификации задайте:
+
+```env
+AUTH_REQUIRED=true
+JWT_SECRET=replace-me-with-long-random-secret
+JWT_ACCESS_TTL=900
+JWT_REFRESH_TTL=604800
+```
+
+### Эндпоинты аутентификации
+
+```http
+POST /api/auth/register
+POST /api/auth/login
+POST /api/auth/refresh
+POST /api/auth/logout
+GET /api/auth/me
+```
+
+Пароли хранятся в виде PBKDF2-хеша с солью, а в ответах API и логах не передаются. Токен доступа подписывается секретом из `.env`.
+
+### Развёртывание стека
+
+```bash
+Copy-Item .env.example .env
+# задайте значения DB_PASSWORD, JWT_SECRET, GRAFANA_ADMIN_PASSWORD
+docker compose up --build -d
+```
+
+В составе стека:
+
+- `nginx` как reverse proxy на `:80`;
+- `api` сервис Node.js на порту `3000`;
+- `postgres` как база данных с томом `pgdata`;
+- `prometheus` для сбора метрик;
+- `grafana` на `http://localhost:3001` с автоматическим provisioning datasource и dashboard.
+
+### Метрики и мониторинг
+
+Приложение отдаёт метрики на маршруте `/metrics` в формате Prometheus. Grafana подключается автоматически через provisioning в `deploy/grafana/...`.
+
+### Полезные ссылки
+
+- `http://localhost` — Nginx entry point;
+- `http://localhost:3001` — Grafana dashboard;
+- `http://localhost:3000/api/health` — стандартная проверка доступности;
+- `http://localhost:3000/api/health/ready` — readiness-check с учётом БД.
+
+### Операционные рекомендации
+
+- следите за логами через docker compose logs -f api;
+- проверяйте состояние сервисов через `docker compose ps`;
+- для отката миграций используйте `npm run db:migrate:undo` или `npm run db:migrate:undo:all` в контексте приложения.
+
+Для деплоя за Nginx и Grafana используйте файлы в `deploy/` и настройку `AUTH_REQUIRED=true` при необходимости строгой работы по ролям.
