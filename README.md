@@ -6,35 +6,54 @@ REST API для учёта оборудования и заявок на обс�
 
 ## Быстрый запуск API
 
+Этот режим предназначен для локальной разработки: API запускается на `http://localhost:3000` и по умолчанию использует JSON-файлы. Для защиты и полного стека используйте Docker Compose по инструкции ниже.
+
 ```bash
 npm install
 npm run dev
 ```
 
-Локальный режим использует JSON-хранилище. Для полного эксплуатационного стека используйте Compose.
+Для локального запуска порт задаётся переменной `PORT`. PostgreSQL используется только при `USE_POSTGRES=true` и настроенном подключении к БД.
 
 ## PostgreSQL и Docker
 
-Проект подготовлен под PostgreSQL 16, который запускается через Docker Compose.
+Проект подготовлен под PostgreSQL 16, который запускается через Docker Compose. Перед запуском установите и запустите Docker Desktop. В корне репозитория создайте `.env` и задайте уникальные значения обязательных секретов:
 
-```bash
+```powershell
 Copy-Item .env.example .env
-# задайте уникальные DB_PASSWORD, JWT_SECRET, BOOTSTRAP_ADMIN_PASSWORD,
-# GRAFANA_ADMIN_PASSWORD и ALERT_WEBHOOK_TOKEN в .env
+# Отредактируйте .env: задайте DB_PASSWORD, JWT_SECRET,
+# BOOTSTRAP_ADMIN_EMAIL, BOOTSTRAP_ADMIN_PASSWORD,
+# GRAFANA_ADMIN_PASSWORD и ALERT_WEBHOOK_TOKEN.
 docker compose up --build -d
+docker compose ps
 ```
 
-Compose поднимает PostgreSQL, одноразовый шаг миграций и seed, API, Nginx, Prometheus, Alertmanager и Grafana. API ждёт готовности БД и завершения `db-setup`. Наружу опубликован только Nginx на порту 80; Grafana доступна через `http://localhost/grafana/` только с loopback/частной сети.
+Compose поднимает PostgreSQL 16, одноразовый контейнер `db-setup` для миграций и seed, API, Nginx, Prometheus, Alertmanager и Grafana. API ждёт готовности БД и успешного завершения `db-setup`. Первое создание образов может занять несколько минут.
 
-При первом запуске в пустом auth-хранилище создаётся admin из `BOOTSTRAP_ADMIN_EMAIL` и `BOOTSTRAP_ADMIN_PASSWORD`. Хранилище лежит в Docker volume `api-data`; изменение bootstrap-переменных не меняет уже созданную учётную запись. Регистрация через API всегда создаёт `viewer`.
+Наружу опубликован только Nginx на порту 80. Пользуйтесь адресами:
+
+- `http://localhost/` — проверка Nginx;
+- `http://localhost/api/docs/` — Swagger UI;
+- `http://localhost/api/openapi.json` — OpenAPI JSON;
+- `http://localhost/api/health/ready` — готовность API и подключения к БД;
+- `http://localhost/grafana/` — Grafana.
+
+Порты API `3000`, PostgreSQL `5432`, Prometheus `9090` и Grafana `3000` доступны только внутри Docker-сети, напрямую с хоста они не опубликованы. Nginx ограничивает доступ к Grafana и `/metrics` loopback- и частными IP-адресами.
+
+При первом запуске в пустом auth-хранилище создаётся admin с учётными данными из `BOOTSTRAP_ADMIN_EMAIL` и `BOOTSTRAP_ADMIN_PASSWORD`. Auth-хранилище лежит в Docker volume `api-data`; изменение bootstrap-переменных не меняет уже созданную учётную запись. Регистрация через API всегда создаёт пользователя `viewer`. Учётные данные Grafana задаются `GRAFANA_ADMIN_USER` и `GRAFANA_ADMIN_PASSWORD`.
+
+Seed загружает демонстрационные данные один раз и отмечается в БД. Стандартный набор: 2 площадки, 6 единиц оборудования, 20 заявок и 5 специалистов. Если в `DATA_DIR` доступны `equipment.json` и `requests.json` из Кейса 2, seed импортирует их вместо создания соответствующих демонстрационных записей. Существующие Docker volumes сохраняются между перезапусками, поэтому seed не выполняется заново при каждом `up`.
 
 Проверка стека и логи:
 
 ```bash
 docker compose ps
+docker compose logs --tail 100 db-setup
 docker compose logs -f api
 docker compose logs -f alertmanager
 ```
+
+Для остановки без удаления данных выполните `docker compose down`. Не используйте `docker compose down -v` для обычной остановки: команда удаляет volumes, включая данные PostgreSQL и Grafana.
 
 Параметры подключения PostgreSQL задаются переменными окружения. Не коммитьте `.env`; для эксплуатации используйте уникальные случайные значения секретов.
 
@@ -49,33 +68,35 @@ docker compose logs -f alertmanager
 - `DB_POOL_MAX`
 - `DB_POOL_IDLE_TIMEOUT`
 
-Миграции применяются командой:
+В Compose миграции и seed применяются автоматически контейнером `db-setup`. Следующие команды запускаются на хосте и предназначены для отдельно запущенного API/БД. Для обслуживания базы из Compose запустите CLI в контейнере:
+
+```powershell
+docker compose run --rm db-setup npm run db:migrate
+docker compose run --rm db-setup npm run db:seed
+```
+
+Для локального окружения с доступной БД:
 
 ```bash
 npm run db:migrate
-```
-
-Для включения PostgreSQL-репозитория в приложении установите `USE_POSTGRES=true` в `.env`.
-
-Для загрузки демонстрационных данных используйте:
-
-```bash
 npm run db:seed
 ```
 
-Seed создаёт 2 площадки, 6 единиц оборудования, 20 заявок и 5 специалистов. Если в `DATA_DIR` уже лежат `equipment.json` и `requests.json` из Кейса 2, seed импортирует их. Без этих файлов создаются демонстрационные записи. Compose отслеживает выполнение seed и не запускает его повторно после перезапуска стека.
+Локальный API использует PostgreSQL только при `USE_POSTGRES=true` и корректно заданных параметрах подключения.
 
 Откат миграций:
 
-```bash
-npm run db:migrate:undo
+```powershell
+docker compose run --rm db-setup npm run db:migrate:undo
 ```
 
 Полный откат схемы (удаляет все таблицы, созданные миграциями):
 
-```bash
-npm run db:migrate:undo:all
+```powershell
+docker compose run --rm db-setup npm run db:migrate:undo:all
 ```
+
+Для локальной БД вне Compose используйте соответствующие `npm run db:migrate:undo` и `npm run db:migrate:undo:all`. Перед откатом сделайте резервную копию.
 
 Схема хранится в каталоге `src/db/migrations`, модели — в `src/db/models`, а seed-данные — в `src/db/seeders`.
 
@@ -141,7 +162,7 @@ erDiagram
 | GET | `/api/sites/:id/summary` | Сводка площадки |
 | GET | `/api/reports/equipment-load` | Нагрузка на оборудование |
 
-`GET /api/health` проверяет PostgreSQL-соединение при `USE_POSTGRES=true` и возвращает 503 при недоступной БД.
+`GET /api/health` и `/api/health/ready` проверяют PostgreSQL-соединение при `USE_POSTGRES=true` и возвращают 503 при недоступной БД. `/api/health/live` проверяет, что процесс API отвечает.
 
 Изменяющие маршруты требуют bearer access token и соответствующую роль. Запрос без токена получает 401, недостаточная роль — 403. Метрики `/metrics` ограничены Nginx по IP; Prometheus опрашивает API по внутренней Docker-сети.
 
@@ -160,9 +181,14 @@ erDiagram
 
 ## Пример
 
-```bash
-curl -X POST http://localhost:3000/api/equipment -H "Content-Type: application/json" -d '{"name":"Турбина A-1","type":"turbine","serialNumber":"WT-001","location":{"lat":55.75,"lon":37.61},"status":"operational","installedAt":"2020-01-01T00:00:00.000Z"}'
+```powershell
+curl.exe -X POST http://localhost/api/equipment `
+  -H "Content-Type: application/json" `
+  -H "Authorization: Bearer <access-token>" `
+  -d '{"name":"Турбина A-1","type":"turbine","serialNumber":"WT-001","location":{"lat":55.75,"lon":37.61},"status":"operational","installedAt":"2020-01-01T00:00:00.000Z"}'
 ```
+
+Для Compose сначала выполните вход через `POST /api/auth/login` в Swagger и передайте полученный `accessToken` как bearer token. В Swagger это можно сделать кнопкой **Authorize**.
 
 `helmet` устанавливает защитные заголовки, CORS разрешает только `CORS_ORIGINS`, а rate limit
 возвращает 429 и стандартные заголовки лимита. Каждый запрос получает `x-request-id`, который
@@ -190,7 +216,9 @@ Grafana dashboard `Maintenance API overview` provisioned автоматичес�
 
 ---
 
-CLI-утилита на Node.js для получения краткого погодного дайджеста по одному или нескольким городам через REST API Open-Meteo. Приложение:
+## Утилита погоды из Кейса 1 (отдельный CLI)
+
+Это сохранённая утилита первого кейса, а не веб-интерфейс сервиса заявок. Она запускается отдельно из корня проекта и получает погодный дайджест через REST API Open-Meteo. Приложение:
 
 - получает координаты города по геокодингу;
 - запрашивает прогноз на несколько дней;
@@ -205,7 +233,7 @@ CLI-утилита на Node.js для получения краткого по�
 - npm
 - доступ в интернет
 
-## Установка
+### Установка CLI
 
 1. Склонируйте проект или откройте папку с репозиторием.
 2. Перейдите в корень проекта:
@@ -223,10 +251,10 @@ npm install
 4. При необходимости создайте файл `.env` на основе `.env.example`:
 
 ```bash
-cp .env.example .env
+Copy-Item .env.example .env
 ```
 
-## Переменные окружения
+### Переменные окружения CLI
 
 Проект читает следующие параметры:
 
@@ -244,7 +272,7 @@ REQUEST_TIMEOUT=5000
 REPORTS_DIR=reports
 ```
 
-## Запуск
+### Запуск CLI
 
 Основной запуск:
 
@@ -272,14 +300,14 @@ node src/index.js --help
 
 > В Windows PowerShell наиболее надёжно запускать утилиту напрямую через `node src/index.js ...`. Передача аргументов через `npm start` / `npm run` может интерпретироваться не так, как ожидается.
 
-## Параметры CLI
+### Параметры CLI
 
 - `--city` — обязательный параметр. Допускает одно название города или список городов через запятую.
 - `--days` — необязательный параметр. Целое число от 1 до 7, по умолчанию `3`.
 - `--no-cache` — необязательный параметр. Принудительно выполняет сетевой запрос без чтения локального кэша.
 - `--help` / `-h` — выводит справку по использованию.
 
-## Пример вывода
+### Пример вывода
 
 ```text
 City: Москва
@@ -293,7 +321,7 @@ Date                Min °C   Max °C   Precipitation
 2026-09-15    11.7    18.6           0.1
 ```
 
-## Пример вывода для нескольких городов
+### Пример вывода для нескольких городов
 
 ```text
 City: Казань
@@ -317,7 +345,7 @@ Date                Min °C   Max °C   Precipitation
 2026-09-15      11    16.8             0
 ```
 
-## Кэширование и отчёты
+### Кэширование и отчёты
 
 После каждого успешного запуска приложение сохраняет отчёт в каталог `reports/` по шаблону:
 
@@ -334,7 +362,7 @@ reports/казань-2026-09-13.json
 
 Если отчёт за текущую дату уже существует, приложение читает его из кэша, если флаг `--no-cache` не передан.
 
-## Обработка ошибок
+### Обработка ошибок
 
 Утилита корректно обрабатывает следующие сценарии:
 
@@ -350,7 +378,7 @@ reports/казань-2026-09-13.json
 При ошибке приложение пишет понятное сообщение и завершает процесс с кодом `1`.
 При успехе — завершает процесс с кодом `0`.
 
-## Структура проекта
+### Структура проекта CLI
 
 ```text
 src/
@@ -368,7 +396,7 @@ docs/
   postman/        Экспортированная коллекция Postman
 ```
 
-## Полезные команды
+### Полезные команды CLI
 
 ```bash
 node src/index.js --city "Москва" --days 3
@@ -378,7 +406,7 @@ npm run lint
 npm run check
 ```
 
-## Примечание
+### Примечание
 
 Проект реализован без стороннего HTTP-клиента, с использованием встроенного `fetch`, `async/await` и `AbortController` для ограничения времени запроса. Основная цель — консольный погодный дайджест с сохранением результатов в локальные JSON-отчёты.
 
@@ -417,10 +445,11 @@ GET /api/auth/me
 
 ### Развёртывание стека
 
-```bash
+```powershell
 Copy-Item .env.example .env
-# задайте значения DB_PASSWORD, JWT_SECRET, GRAFANA_ADMIN_PASSWORD
+# Задайте все обязательные секреты, перечисленные в разделе «PostgreSQL и Docker».
 docker compose up --build -d
+docker compose ps
 ```
 
 В составе стека:
@@ -429,7 +458,7 @@ docker compose up --build -d
 - `api` сервис Node.js на порту `3000`;
 - `postgres` как база данных с томом `pgdata`;
 - `prometheus` для сбора метрик;
-- `grafana` на `http://localhost:3001` с автоматическим provisioning datasource и dashboard.
+- `grafana` на `http://localhost/grafana/` с автоматической настройкой datasource и dashboard.
 
 ### Метрики и мониторинг
 
@@ -438,14 +467,14 @@ docker compose up --build -d
 ### Полезные ссылки
 
 - `http://localhost` — Nginx entry point;
-- `http://localhost:3001` — Grafana dashboard;
-- `http://localhost:3000/api/health` — стандартная проверка доступности;
-- `http://localhost:3000/api/health/ready` — readiness-check с учётом БД.
+- `http://localhost/grafana/` — Grafana;
+- `http://localhost/api/health` — проверка доступности;
+- `http://localhost/api/health/ready` — readiness-check с учётом БД.
 
 ### Операционные рекомендации
 
 - следите за логами через docker compose logs -f api;
 - проверяйте состояние сервисов через `docker compose ps`;
-- для отката миграций используйте `npm run db:migrate:undo` или `npm run db:migrate:undo:all` в контексте приложения.
+- для отката миграций Compose используйте `docker compose run --rm db-setup npm run db:migrate:undo` или `docker compose run --rm db-setup npm run db:migrate:undo:all`; перед откатом сделайте резервную копию БД.
 
 Для деплоя за Nginx и Grafana используйте файлы в `deploy/` и настройку `AUTH_REQUIRED=true` при необходимости строгой работы по ролям.
